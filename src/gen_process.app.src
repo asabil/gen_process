@@ -1,0 +1,10 @@
+{application, gen_process, [
+	{description, "Generic process"},
+	{vsn, git},
+	{registered, []},
+	{applications, [
+		kernel,
+		stdlib
+	]},
+	{env, []}
+]}.
