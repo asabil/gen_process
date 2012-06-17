@@ -16,7 +16,8 @@
 -export([
 	start_anonymous/1,
 	start_local/1,
-	start_global/1
+	start_global/1,
+	crash/1
 ]).
 
 % The gen_process behaviour
@@ -29,7 +30,7 @@
 
 
 all() ->
-	[start_anonymous, start_local, start_global].
+	[start_anonymous, start_local, start_global, crash].
 
 groups() ->
 	[].
@@ -53,14 +54,14 @@ start_anonymous(Config) when is_list(Config) ->
 	%% normal
 	{ok, Pid0} = gen_process:start(?MODULE, [], []),
 	pong = gen_process:call(Pid0, ping),
-	ok = gen_process:call(Pid0, stop),
+	ok = gen_process:call(Pid0, {stop, stopped}),
 	wait_for_process(Pid0),
 	{'EXIT', {noproc, _}} = (catch gen_process:call(Pid0, ping, 1)),
 
 	%% timeout
 	{ok, Pid00} = gen_process:start(?MODULE, [], [{timeout, 1000}]),
 	pong = gen_process:call(Pid00, ping),
-	ok = gen_process:call(Pid00, stop),
+	ok = gen_process:call(Pid00, {stop, stopped}),
 	{error, timeout} = gen_process:start(?MODULE, sleep, [{timeout,100}]),
 
 	%% ignore
@@ -72,7 +73,7 @@ start_anonymous(Config) when is_list(Config) ->
     %% linked
 	{ok, Pid1} = gen_process:start_link(?MODULE, [], []),
 	pong = gen_process:call(Pid1, ping),
-	ok = gen_process:call(Pid1, stop),
+	ok = gen_process:call(Pid1, {stop, stopped}),
 	receive
 		{'EXIT', Pid1, stopped} -> ok
 	after 5000 ->
@@ -89,7 +90,7 @@ start_local(Config) when is_list(Config) ->
 	{ok, Pid2} = gen_process:start({local, my_test_name}, ?MODULE, [], []),
 	pong = gen_process:call(my_test_name, ping),
 	{error, {already_started, Pid2}} = gen_process:start({local, my_test_name}, ?MODULE, [], []),
-	ok = gen_process:call(my_test_name, stop),
+	ok = gen_process:call(my_test_name, {stop, stopped}),
 	wait_for_process(Pid2),
 	{'EXIT', {noproc,_}} = (catch gen_process:call(Pid2, started_p, 10)),
 
@@ -97,7 +98,7 @@ start_local(Config) when is_list(Config) ->
 	{ok, Pid3} = gen_process:start_link({local, my_test_name}, ?MODULE, [], []),
 	pong = gen_process:call(my_test_name, ping),
 	{error, {already_started, Pid3}} = gen_process:start({local, my_test_name}, ?MODULE, [], []),
-	ok = gen_process:call(my_test_name, stop),
+	ok = gen_process:call(my_test_name, {stop, stopped}),
 	receive
 		{'EXIT', Pid3, stopped} -> ok
 	after 5000 ->
@@ -114,7 +115,7 @@ start_global(Config) when is_list(Config) ->
 	{ok, Pid2} = gen_process:start({global, my_test_name}, ?MODULE, [], []),
 	pong = gen_process:call({global, my_test_name}, ping),
 	{error, {already_started, Pid2}} = gen_process:start({global, my_test_name}, ?MODULE, [], []),
-	ok = gen_process:call({global, my_test_name}, stop),
+	ok = gen_process:call({global, my_test_name}, {stop, stopped}),
 	wait_for_process(Pid2),
 	{'EXIT', {noproc,_}} = (catch gen_process:call(Pid2, started_p, 10)),
 
@@ -122,7 +123,7 @@ start_global(Config) when is_list(Config) ->
 	{ok, Pid3} = gen_process:start_link({global, my_test_name}, ?MODULE, [], []),
 	pong = gen_process:call({global, my_test_name}, ping),
 	{error, {already_started, Pid3}} = gen_process:start({global, my_test_name}, ?MODULE, [], []),
-	ok = gen_process:call({global, my_test_name}, stop),
+	ok = gen_process:call({global, my_test_name}, {stop, stopped}),
 	receive
 		{'EXIT', Pid3, stopped} -> ok
 	after 5000 ->
@@ -132,6 +133,61 @@ start_global(Config) when is_list(Config) ->
 	process_flag(trap_exit, OldFlags),
 	ok.
 
+
+crash(Config) when is_list(Config) ->
+	error_logger_forwarder:register(),
+
+	process_flag(trap_exit, true),
+
+	%% This crash should not generate a crash report.
+	{ok, Pid0} = gen_process:start_link(?MODULE, [], []),
+	{'EXIT', {{shutdown, reason}, _}} = (catch gen_process:call(Pid0, {exit, {shutdown, reason}})),
+	receive {'EXIT', Pid0, {shutdown, reason}} -> ok end,
+
+	%% This crash should not generate a crash report.
+	{ok, Pid1} = gen_process:start_link(?MODULE, {state, state1}, []),
+	{'EXIT', {{shutdown, reason}, _}} = (catch gen_process:call(Pid1, {stop_noreply, {shutdown, reason}})),
+	receive {'EXIT', Pid1, {shutdown, reason}} -> ok end,
+
+	%% This crash should not generate a crash report.
+	{ok, Pid2} = gen_process:start_link(?MODULE, [], []),
+	{'EXIT', {shutdown, _}} = (catch gen_process:call(Pid2, {exit, shutdown})),
+	receive {'EXIT', Pid2, shutdown} -> ok end,
+
+	%% This crash should not generate a crash report.
+	{ok, Pid3} = gen_process:start_link(?MODULE, {state, state3}, []),
+	{'EXIT', {shutdown, _}} = (catch gen_process:call(Pid3, {stop_noreply, shutdown})),
+	receive {'EXIT', Pid3, shutdown} -> ok end,
+
+	process_flag(trap_exit, false),
+
+	%%%% This crash should generate a crash report and a report
+	%%%% from gen_process.
+	{ok, Pid4} = gen_process:start(?MODULE, {state, state4}, []),
+	{'EXIT', {crashed, _}} = (catch gen_process:call(Pid4, {exit, crashed})),
+	receive
+		{error, _GroupLeader4, {Pid4, "** Generic process" ++ _, [Pid4, [], state4, crashed]}} ->
+			ok;
+		Other4a ->
+			io:format("Unexpected: ~p", [Other4a]),
+			test_server:fail()
+	end,
+	receive
+		{error_report, _, {Pid4, crash_report, [List4|_]}} ->
+			{exit,crashed,_} = proplists:get_value(error_info, List4),
+			Pid4 = proplists:get_value(pid, List4);
+		Other4 ->
+			io:format("Unexpected: ~p", [Other4]),
+			test_server:fail()
+	end,
+	receive
+		Any ->
+			io:format("Unexpected: ~p", [Any]),
+			test_server:fail()
+	after 500 ->
+			ok
+	end,
+	ok.
 
 
 wait_for_process(Pid) ->
@@ -163,11 +219,12 @@ process(State) ->
 		{'$call', From, ping} = Message ->
 			gen_process:reply(From, pong),
 			{continue, Message, State};
-		{'$call', From, stop} = Message ->
-			gen_process:reply(From, ok),
-			{stop, stopped, Message, State};
 		{'$call', From, {stop, Reason}} = Message ->
 			gen_process:reply(From, ok),
+			{stop, Reason, Message, State};
+		{'$call', _From, {exit, Reason}} = _Message ->
+			exit(Reason);
+		{'$call', _From, {stop_noreply, Reason}} = Message ->
 			{stop, Reason, Message, State};
 		Message ->
 			{continue, Message, State}
