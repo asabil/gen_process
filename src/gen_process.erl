@@ -186,6 +186,7 @@ print_event(Dev, Event, Name) ->
 %%% ---------------------------------------------------
 %%% Terminate the server.
 %%% ---------------------------------------------------
+-spec terminate(_, _, _, module(), _, _) -> no_return().
 terminate(Reason, Name, Message, Callback, State, Debug) ->
 	case catch Callback:terminate(Reason, State) of
 		{'EXIT', R} ->
