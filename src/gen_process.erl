@@ -11,11 +11,12 @@
 
 %% System exports
 -export([
-		system_continue/3,
-		system_terminate/4,
-		system_code_change/4,
-		format_status/2
-	]).
+	system_continue/3,
+	system_terminate/4,
+	system_code_change/4,
+	format_status/2,
+	loop/5
+]).
 
 %% Internal exports
 -export([init_it/6]).
@@ -68,7 +69,7 @@ call(Name, Request, Timeout) ->
 
 
 reply({To, Tag}, Reply) ->
-    catch To ! {Tag, Reply}.
+	catch To ! {Tag, Reply}.
 
 %%%========================================================================
 %%% Gen-callback functions
