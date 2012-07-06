@@ -137,7 +137,7 @@ loop(Parent, Name, Callback, CallbackState, Debug) ->
 		{continue, Message, NewCallbackState} ->
 			case Message of
 				{system, From, Request} ->
-					sys:handle_system_msg(Request, From, Parent, ?MODULE, Debug, {loop, Name, Callback, NewCallbackState});
+					sys:handle_system_msg(Request, From, Parent, ?MODULE, Debug, {loop, Name, Callback, NewCallbackState}, false);
 				{'EXIT', Parent, Reason} ->
 					terminate(Reason, Name, Message, Callback, NewCallbackState, Debug);
 				_ when Debug =:= [] ->
@@ -149,7 +149,7 @@ loop(Parent, Name, Callback, CallbackState, Debug) ->
 		{hibernate, Message, NewCallbackState} ->
 			case Message of
 				{system, From, Request} ->
-					sys:handle_system_msg(Request, From, Parent, ?MODULE, Debug, {hibernate, Name, Callback, NewCallbackState});
+					sys:handle_system_msg(Request, From, Parent, ?MODULE, Debug, {hibernate, Name, Callback, NewCallbackState}, true);
 				{'EXIT', Parent, Reason} ->
 					terminate(Reason, Name, Message, Callback, NewCallbackState, Debug);
 				_ when Debug =:= [] ->
@@ -175,8 +175,8 @@ system_continue(Parent, Debug, {loop, Name, Callback, CallbackState}) ->
 system_continue(Parent, Debug, {hibernate, Name, Callback, CallbackState}) ->
 	proc_lib:hibernate(?MODULE, loop, [Parent, Name, Callback, CallbackState, Debug]).
 
--spec system_terminate(_, _, _, [_]) -> no_return().
-system_terminate(Reason, _Parent, Debug, [Name, Callback, CallbackState]) ->
+-spec system_terminate(_, _, _, {loop | hibernate, _, _, _}) -> no_return().
+system_terminate(Reason, _Parent, Debug, {_, Name, Callback, CallbackState}) ->
 	terminate(Reason, Name, [], Callback, CallbackState, Debug).
 
 system_code_change({Continue, Name, Callback, CallbackState}, _Module, OldVsn, Extra) ->
