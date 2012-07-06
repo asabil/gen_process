@@ -17,7 +17,8 @@
 	start_anonymous/1,
 	start_local/1,
 	start_global/1,
-	crash/1
+	crash/1,
+	hibernate/1
 ]).
 
 % The gen_process behaviour
@@ -30,7 +31,7 @@
 
 
 all() ->
-	[start_anonymous, start_local, start_global, crash].
+	[start_anonymous, start_local, start_global, crash, hibernate].
 
 groups() ->
 	[].
@@ -189,6 +190,54 @@ crash(Config) when is_list(Config) ->
 	end,
 	ok.
 
+hibernate(Config) when is_list(Config) ->
+	OldFlags = process_flag(trap_exit, true),
+
+	{ok, Pid} = gen_process:start_link({local, gen_process_hibernate}, ?MODULE, [], []),
+
+	pong = gen_process:call(gen_process_hibernate, ping),
+	ok = gen_process:call(gen_process_hibernate, hibernate),
+	timer:sleep(100),
+	{current_function, {erlang, hibernate, 3}} = erlang:process_info(Pid, current_function),
+	Parent = self(),
+	Fun = fun() ->
+			receive
+				go ->
+					ok
+			end,
+			timer:sleep(100),
+			X = erlang:process_info(Pid, current_function),
+			Pid ! {reply, ok},
+			Parent ! {result, X}
+	end,
+	Pid2 = spawn_link(Fun),
+	ok = gen_process:call(gen_process_hibernate, {hibernate_noreply, Pid2}),
+	receive
+		{result, R} ->
+			{current_function, {erlang, hibernate, 3}} = R
+	end,
+	ok = gen_process:call(gen_process_hibernate, hibernate),
+	timer:sleep(100),
+	{current_function, {erlang, hibernate, 3}} = erlang:process_info(Pid, current_function),
+	sys:suspend(gen_process_hibernate),
+	timer:sleep(100),
+	{current_function,{erlang, hibernate, 3}} = erlang:process_info(Pid, current_function),
+	sys:resume(gen_process_hibernate),
+	timer:sleep(100),
+	{current_function, {erlang, hibernate, 3}} = erlang:process_info(Pid, current_function),
+	pong = gen_process:call(gen_process_hibernate, ping),
+	true = ({current_function, {erlang, hibernate, 3}} =/= erlang:process_info(Pid, current_function)),
+
+	ok = gen_process:call(gen_process_hibernate, {stop, stopped}),
+	receive
+		{'EXIT', Pid, stopped} -> ok
+	after
+		5000 -> test_server:fail(gen_process_did_not_die)
+	end,
+	process_flag(trap_exit, OldFlags),
+	ok.
+
+
 
 wait_for_process(Pid) ->
 	case erlang:is_process_alive(Pid) of
@@ -226,12 +275,22 @@ process(State) ->
 			exit(Reason);
 		{'$call', _From, {stop_noreply, Reason}} = Message ->
 			{stop, Reason, Message, State};
+		{'$call', From, hibernate} = Message ->
+			gen_process:reply(From, ok),
+			{hibernate, Message, State};
+		{'$call', From, {hibernate_noreply, Pid}} = Message ->
+			Pid ! go,
+			{hibernate, Message, From};
+		{reply, Reply} = Message ->
+			gen_process:reply(State, Reply),
+			{continue, Message, []};
+		{system, _, _} = Message ->
+			{hibernate, Message, State};
 		Message ->
 			{continue, Message, State}
 	end.
 
 terminate({From, stopped}, _State) ->
-	io:format("FOOBAR"),
 	From ! {self(), stopped},
 	ok;
 terminate({From, stopped_info}, _State) ->
