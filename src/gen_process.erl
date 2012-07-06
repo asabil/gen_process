@@ -20,7 +20,7 @@
 %% Internal exports
 -export([init_it/6]).
 
--ifndef(NO_CALLBACKS).
+-ifndef(no_callbacks).
 -callback init(Args :: term()) ->
 	{ok, StateData :: term()} |
 	{stop, Reason :: term()} |
@@ -136,20 +136,29 @@ loop(Parent, Name, Callback, CallbackState, Debug) ->
 		{continue, Message, NewCallbackState} ->
 			case Message of
 				{system, From, Request} ->
-					sys:handle_system_msg(Request, From, Parent, ?MODULE, Debug, [Name, Callback, CallbackState]);
+					sys:handle_system_msg(Request, From, Parent, ?MODULE, Debug, {loop, Name, Callback, NewCallbackState});
 				{'EXIT', Parent, Reason} ->
-					terminate(Reason, Name, Message, Callback, CallbackState, Debug);
+					terminate(Reason, Name, Message, Callback, NewCallbackState, Debug);
 				_ when Debug =:= [] ->
 					loop(Parent, Name, Callback, NewCallbackState, Debug);
 				_ ->
 					NewDebug = sys:handle_debug(Debug, fun print_event/3, Name, {in, Message}),
 					loop(Parent, Name, Callback, NewCallbackState, NewDebug)
 			end;
-		{continue, NewCallbackState} ->
-			loop(Parent, Name, Callback, NewCallbackState, Debug);
-		% TODO: add support for hibernating
-		%{hibernate, NewCallbackState} ->
-		%	proc_lib:hibernate(?MODULE, loop, [Parent, Name, Callback, NewCallbackState, Debug]);
+		{hibernate, Message, NewCallbackState} ->
+			case Message of
+				{system, From, Request} ->
+					sys:handle_system_msg(Request, From, Parent, ?MODULE, Debug, {hibernate, Name, Callback, NewCallbackState});
+				{'EXIT', Parent, Reason} ->
+					terminate(Reason, Name, Message, Callback, NewCallbackState, Debug);
+				_ when Debug =:= [] ->
+					proc_lib:hibernate(?MODULE, loop, [Parent, Name, Callback, NewCallbackState, Debug]);
+				_ ->
+					NewDebug = sys:handle_debug(Debug, fun print_event/3, Name, {in, Message}),
+					proc_lib:hibernate(?MODULE, loop, [Parent, Name, Callback, NewCallbackState, NewDebug])
+			end;
+		{hibernate, NewCallbackState} ->
+			proc_lib:hibernate(?MODULE, loop, [Parent, Name, Callback, NewCallbackState, Debug]);
 		{stop, Reason, Message, NewCallbackState} ->
 			NewDebug = sys:handle_debug(Debug, fun print_event/3, Name, {in, Message}),
 			terminate(Reason, Name, Message, Callback, NewCallbackState, NewDebug);
@@ -160,16 +169,18 @@ loop(Parent, Name, Callback, CallbackState, Debug) ->
 %%-----------------------------------------------------------------
 %% Callback functions for system messages handling.
 %%-----------------------------------------------------------------
-system_continue(Parent, Debug, [Name, Callback, CallbackState]) ->
-	loop(Parent, Name, Callback, CallbackState, Debug).
+system_continue(Parent, Debug, {loop, Name, Callback, CallbackState}) ->
+	loop(Parent, Name, Callback, CallbackState, Debug);
+system_continue(Parent, Debug, {hibernate, Name, Callback, CallbackState}) ->
+	proc_lib:hibernate(?MODULE, loop, [Parent, Name, Callback, CallbackState, Debug]).
 
 -spec system_terminate(_, _, _, [_]) -> no_return().
 system_terminate(Reason, _Parent, Debug, [Name, Callback, CallbackState]) ->
 	terminate(Reason, Name, [], Callback, CallbackState, Debug).
 
-system_code_change([Name, Callback, CallbackState], _Module, OldVsn, Extra) ->
+system_code_change({Continue, Name, Callback, CallbackState}, _Module, OldVsn, Extra) ->
 	case catch Callback:code_change(OldVsn, CallbackState, Extra) of
-		{ok, NewCallbackState} -> {ok, [Name, Callback, NewCallbackState]};
+		{ok, NewCallbackState} -> {ok, {Continue, Name, Callback, NewCallbackState}};
 		Else -> Else
 	end.
 
