@@ -34,6 +34,7 @@
 -callback code_change(OldVsn :: term() | {down, term()}, StateData :: term(), Extra :: term()) ->
 	{ok, NewStateData :: term()}.
 -else.
+-export([behaviour_info/1]).
 -spec behaviour_info(_) -> undefined | [{atom(), non_neg_integer()}].
 behaviour_info(callbacks) ->
 	[{init, 1}, {process, 1}, {terminate, 2}, {code_change, 3}];
