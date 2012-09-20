@@ -267,7 +267,7 @@ error_info(Reason, Name, Msg, State, Debug) ->
 %% Status information
 %%-----------------------------------------------------------------
 format_status(Opt, StatusData) ->
-	[PDict, SysState, Parent, Debug, [Name, Callback, CallbackState]] = StatusData,
+	[PDict, SysState, Parent, Debug, {_Continuation, Name, Callback, CallbackState}] = StatusData,
 	Header = gen:format_status_header("Status for generic process",
 		Name),
 	Log = sys:get_debug(log, Debug, []),
