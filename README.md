@@ -12,7 +12,7 @@ Example
 -------
 This is an example module for a rate limiter that will call a function at maximum ```Count``` number of times per ```Window``` milliseconds.
 
-```erl
+```erlang
 -module(rate_limiter).
 -export([
   start_link/3,
