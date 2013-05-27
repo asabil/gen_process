@@ -17,6 +17,7 @@
 	start_anonymous/1,
 	start_local/1,
 	start_global/1,
+	start_via/1,
 	crash/1,
 	hibernate/1
 ]).
@@ -31,7 +32,7 @@
 
 
 all() ->
-	[start_anonymous, start_local, start_global, crash, hibernate].
+	[start_anonymous, start_local, start_global, start_via, crash, hibernate].
 
 groups() ->
 	[].
@@ -134,6 +135,30 @@ start_global(Config) when is_list(Config) ->
 	process_flag(trap_exit, OldFlags),
 	ok.
 
+start_via(Config) when is_list(Config) ->
+	OldFlags = process_flag(trap_exit, true),
+
+	%% via (global exports via callbacks) register
+	{ok, Pid2} = gen_process:start({via, global, my_test_name}, ?MODULE, [], []),
+	pong = gen_process:call({via, global, my_test_name}, ping),
+	{error, {already_started, Pid2}} = gen_process:start({via, global, my_test_name}, ?MODULE, [], []),
+	ok = gen_process:call({via, global, my_test_name}, {stop, stopped}),
+	wait_for_process(Pid2),
+	{'EXIT', {noproc,_}} = (catch gen_process:call(Pid2, started_p, 10)),
+
+	%% via (global exports via callbacks) register linked
+	{ok, Pid3} = gen_process:start_link({via, global, my_test_name}, ?MODULE, [], []),
+	pong = gen_process:call({via, global, my_test_name}, ping),
+	{error, {already_started, Pid3}} = gen_process:start({via, global, my_test_name}, ?MODULE, [], []),
+	ok = gen_process:call({via, global, my_test_name}, {stop, stopped}),
+	receive
+		{'EXIT', Pid3, stopped} -> ok
+	after 5000 ->
+			test_server:fail(not_stopped)
+	end,
+
+	process_flag(trap_exit, OldFlags),
+	ok.
 
 crash(Config) when is_list(Config) ->
 	error_logger_forwarder:register(),
