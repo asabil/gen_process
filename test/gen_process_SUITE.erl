@@ -30,6 +30,10 @@
 	format_status/2
 ]).
 
+% gen callback
+-export([
+	init_it/6
+]).
 
 all() ->
 	[start_anonymous, start_local, start_global, start_via, crash, hibernate].
@@ -82,6 +86,48 @@ start_anonymous(Config) when is_list(Config) ->
 		test_server:fail(not_stopped)
 	end,
 
+	%% enter_loop
+	{ok, Pid2} = start_enter_loop([]),
+	pong = gen_process:call(Pid2, ping),
+	ok = gen_process:call(Pid2, {stop, stopped}),
+	wait_for_process(Pid2),
+
+	%% enter_loop linked
+	{ok, Pid3} = start_link_enter_loop([]),
+	pong = gen_process:call(Pid3, ping),
+	ok = gen_process:call(Pid3, {stop, stopped}),
+	receive
+		{'EXIT', Pid3, stopped} -> ok
+	after 5000 ->
+		test_server:fail(not_stopped)
+	end,
+
+	%% enter_loop parent exit
+	Self = self(),
+	Fun = fun() ->
+			Self ! start_link_enter_loop(trap_exit),
+			receive stop -> exit({shutdown, parent_exit}) end
+		end,
+	Pid4 = spawn_link(Fun),
+	receive
+		{ok, Pid5} ->
+			Ref = erlang:monitor(process, Pid5),
+			Pid4 ! stop,
+			receive
+				%% Pid5 is trapping exits so receives an 'EXIT' message. This
+				%% will only cause Pid5 to close with the same reason if it
+				%% recognises Pid4 as it's Parent.
+				{'DOWN', Ref, process, Pid5, {shutdown, parent_exit}} ->
+					ok
+			after 5000 ->
+				exit(Pid5, kill),
+				test_server:fail(not_stopped)
+			end
+	after 5000 ->
+		exit(Pid4, kill),
+		test_server:fail(failed_to_start_process)
+	end,
+
 	process_flag(trap_exit, OldFlags),
 	ok.
 
@@ -106,6 +152,14 @@ start_local(Config) when is_list(Config) ->
 	after 5000 ->
 			test_server:fail(not_stopped)
 	end,
+
+	%% local register enter_loop
+	{ok, Pid4} = start_enter_loop({local, my_test_name}, []),
+	pong = gen_process:call(my_test_name, ping),
+	{error, {already_started, Pid4}} = gen_process:start({local, my_test_name}, ?MODULE, [], []),
+	ok = gen_process:call(my_test_name, {stop, stopped}),
+	wait_for_process(Pid4),
+	{'EXIT', {noproc,_}} = (catch gen_process:call(Pid4, started_p, 10)),
 
 	process_flag(trap_exit, OldFlags),
 	ok.
@@ -132,6 +186,14 @@ start_global(Config) when is_list(Config) ->
 			test_server:fail(not_stopped)
 	end,
 
+	%% global register enter_loop
+	{ok, Pid4} = start_enter_loop({global, my_test_name}, []),
+	pong = gen_process:call({global, my_test_name}, ping),
+	{error, {already_started, Pid4}} = gen_process:start({global, my_test_name}, ?MODULE, [], []),
+	ok = gen_process:call({global, my_test_name}, {stop, stopped}),
+	wait_for_process(Pid4),
+	{'EXIT', {noproc,_}} = (catch gen_process:call(Pid4, started_p, 10)),
+
 	process_flag(trap_exit, OldFlags),
 	ok.
 
@@ -156,6 +218,14 @@ start_via(Config) when is_list(Config) ->
 	after 5000 ->
 			test_server:fail(not_stopped)
 	end,
+	
+	%% via (global exports via callbacks) register enter_loop
+	{ok, Pid4} = start_enter_loop({via, global, my_test_name}, []),
+	pong = gen_process:call({via, global, my_test_name}, ping),
+	{error, {already_started, Pid4}} = gen_process:start({via, global, my_test_name}, ?MODULE, [], []),
+	ok = gen_process:call({via, global, my_test_name}, {stop, stopped}),
+	wait_for_process(Pid4),
+	{'EXIT', {noproc,_}} = (catch gen_process:call(Pid4, started_p, 10)),
 
 	process_flag(trap_exit, OldFlags),
 	ok.
@@ -328,3 +398,26 @@ format_status(terminate, [_PDict, State]) ->
 	State;
 format_status(normal, [_PDict, _State]) ->
 	format_status_called.
+
+%% For testing enter_loop entry. gen:start/5,6 will spawn process, link and
+%% register (when needed), then call ?MODULE:init_it/6.
+start_enter_loop(State) ->
+	gen:start(?MODULE, nolink, ?MODULE, State, []).
+
+start_enter_loop(Name, State) ->
+	gen:start(?MODULE, nolink, Name, ?MODULE, State, []).
+
+start_link_enter_loop(State) ->
+	gen:start(?MODULE, link, ?MODULE, State, []).
+
+%% If 3rd argument (Name) is a pid then is an anonymous process.
+init_it(Starter, _Parent, Pid, ?MODULE, trap_exit, _Opts) when is_pid(Pid) ->
+	proc_lib:init_ack(Starter, {ok, self()}),
+	process_flag(trap_exit, true),
+	gen_process:enter_loop(?MODULE, [], []);
+init_it(Starter, _Parent, Pid, ?MODULE, State, _Opts) when is_pid(Pid) ->
+	proc_lib:init_ack(Starter, {ok, self()}),
+	gen_process:enter_loop(?MODULE, [], State);
+init_it(Starter, _Parent, Name, ?MODULE, State, _Opts) ->
+	proc_lib:init_ack(Starter, {ok, self()}),
+	gen_process:enter_loop(?MODULE, [], State, Name).
