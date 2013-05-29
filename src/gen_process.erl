@@ -137,6 +137,11 @@ loop(Parent, Name, Callback, CallbackState, Debug) ->
 	case catch Callback:process(CallbackState) of
 		{continue, Message, NewCallbackState} ->
 			case Message of
+				{system, From, get_state} ->
+					sys:handle_system_msg(get_state, From, Parent, ?MODULE, Debug, {NewCallbackState, {loop, Name, Callback, NewCallbackState}}, false);
+				{system, From, {replace_state, CallbackStateFun}} ->
+					NewCallbackState2 = try CallbackStateFun(NewCallbackState) catch _:_ -> NewCallbackState end,
+					sys:handle_system_msg(replace_state, From, Parent, ?MODULE, Debug, {NewCallbackState2, {loop, Name, Callback, NewCallbackState2}}, false);
 				{system, From, Request} ->
 					sys:handle_system_msg(Request, From, Parent, ?MODULE, Debug, {loop, Name, Callback, NewCallbackState}, false);
 				{'EXIT', Parent, Reason} ->
@@ -149,6 +154,11 @@ loop(Parent, Name, Callback, CallbackState, Debug) ->
 			end;
 		{hibernate, Message, NewCallbackState} ->
 			case Message of
+				{system, From, get_state} ->
+					sys:handle_system_msg(get_state, From, Parent, ?MODULE, Debug, {NewCallbackState, {hibernate, Name, Callback, NewCallbackState}}, true);
+				{system, From, {replace_state, CallbackStateFun}} ->
+					NewCallbackState2 = try CallbackStateFun(NewCallbackState) catch _:_ -> NewCallbackState end,
+					sys:handle_system_msg(replace_state, From, Parent, ?MODULE, Debug, {NewCallbackState2, {hibernate, Name, Callback, NewCallbackState2}}, true);
 				{system, From, Request} ->
 					sys:handle_system_msg(Request, From, Parent, ?MODULE, Debug, {hibernate, Name, Callback, NewCallbackState}, true);
 				{'EXIT', Parent, Reason} ->
