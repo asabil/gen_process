@@ -43,7 +43,6 @@
 %% Internal exports
 -export([init_it/6]).
 
--ifndef(no_callbacks).
 -callback init(Args :: term()) ->
 	{ok, StateData :: term()} |
 	{stop, Reason :: term()} |
@@ -55,14 +54,6 @@
 	term().
 -callback code_change(OldVsn :: term() | {down, term()}, StateData :: term(), Extra :: term()) ->
 	{ok, NewStateData :: term()}.
--else.
--export([behaviour_info/1]).
--spec behaviour_info(_) -> undefined | [{atom(), non_neg_integer()}].
-behaviour_info(callbacks) ->
-	[{init, 1}, {process, 1}, {terminate, 2}, {code_change, 3}];
-behaviour_info(_Other) ->
-	undefined.
--endif.
 
 
 start(Mod, Args, Options) ->
