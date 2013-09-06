@@ -19,7 +19,8 @@
 	start_global/1,
 	start_via/1,
 	crash/1,
-	hibernate/1
+	hibernate/1,
+	sys_state/1
 ]).
 
 % The gen_process behaviour
@@ -36,7 +37,7 @@
 ]).
 
 all() ->
-	[start_anonymous, start_local, start_global, start_via, crash, hibernate].
+	[start_anonymous, start_local, start_global, start_via, crash, hibernate, sys_state].
 
 groups() ->
 	[].
@@ -332,7 +333,29 @@ hibernate(Config) when is_list(Config) ->
 	process_flag(trap_exit, OldFlags),
 	ok.
 
-
+sys_state(_) ->
+	case erlang:function_exported(sys, get_state, 1) of
+		false ->
+			{skip, {not_exported, {sys, get_state, 1}}};
+		true ->
+			{ok, Pid} = gen_process:start(?MODULE, [], []),
+			%% will hibernate after receiving sys message.
+			[] = sys:get_state(Pid),
+			%% will hibernate after receiving sys message.
+			new_state = sys:replace_state(Pid, fun(_) -> new_state end),
+			%% will NOT hibernate after receiving sys message.
+			new_state = sys:get_state(Pid),
+			%% will NOT hibernate after receiving sys message.
+			new_state = sys:replace_state(Pid, fun(_) -> error(failed) end),
+			%% will NOT hibernate after receiving sys message.
+			newer_state = sys:replace_state(Pid, fun(_) -> newer_state end),
+			%% will hibernate after receiving sys message.
+			newer_state = sys:replace_state(Pid, fun(_) -> error(failed) end),
+			pong = gen_process:call(Pid, ping),
+			ok = gen_process:call(Pid, {stop, stopped}),
+			wait_for_process(Pid),
+			ok
+	end.
 
 wait_for_process(Pid) ->
 	case erlang:is_process_alive(Pid) of
@@ -379,6 +402,8 @@ process(State) ->
 		{reply, Reply} = Message ->
 			gen_process:reply(State, Reply),
 			{continue, Message, []};
+		{system, _, _} = Message when State =:= new_state ->
+			{continue, Message, State};
 		{system, _, _} = Message ->
 			{hibernate, Message, State};
 		Message ->
