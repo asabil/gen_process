@@ -6,7 +6,9 @@
 	start_link/4,
 	call/2,
 	call/3,
-	reply/2
+	reply/2,
+	enter_loop/3,
+	enter_loop/4
 ]).
 
 %% System exports
@@ -71,6 +73,15 @@ call(Name, Request, Timeout) ->
 
 reply({To, Tag}, Reply) ->
 	catch To ! {Tag, Reply}.
+
+enter_loop(Callback, Options, CallbackState) ->
+	enter_loop(Callback, Options, CallbackState, self()).
+
+enter_loop(Callback, Options, CallbackState, Name0) ->
+	Name = get_proc_name(Name0),
+	Parent = get_parent(),
+	Debug = debug_options(Name, Options),
+	loop(Parent, Name, Callback, CallbackState, Debug).
 
 %%%========================================================================
 %%% Gen-callback functions
@@ -262,6 +273,97 @@ error_info(Reason, Name, Msg, State, Debug) ->
 		[Name, Msg, State, Reason1]),
 	sys:print_log(Debug),
 	ok.
+
+%%% ---------------------------------------------------
+%%% Misc. functions.
+%%% ---------------------------------------------------
+
+opt(Op, [{Op, Value}|_]) ->
+	{ok, Value};
+opt(Op, [_|Options]) ->
+	opt(Op, Options);
+opt(_, []) ->
+	false.
+
+debug_options(Name, Opts) ->
+	case opt(debug, Opts) of
+		{ok, Options} -> dbg_options(Name, Options);
+		_ -> dbg_options(Name, [])
+	end.
+
+dbg_options(Name, []) ->
+	Opts =
+	case init:get_argument(generic_debug) of
+		error ->
+			[];
+		_ ->
+			[log, statistics]
+	end,
+	dbg_opts(Name, Opts);
+dbg_options(Name, Opts) ->
+	dbg_opts(Name, Opts).
+
+dbg_opts(Name, Opts) ->
+	case catch sys:debug_options(Opts) of
+		{'EXIT',_} ->
+			error_logger:format("~p: ignoring erroneous debug options - ~p~n", [Name, Opts]),
+			[];
+		Dbg ->
+			Dbg
+	end.
+
+get_proc_name(Pid) when is_pid(Pid) ->
+	Pid;
+get_proc_name({local, Name}) ->
+	case process_info(self(), registered_name) of
+		{registered_name, Name} ->
+			Name;
+		{registered_name, _Name} ->
+			exit(process_not_registered);
+		[] ->
+			exit(process_not_registered)
+	end;
+get_proc_name({global, Name}) ->
+	case global:whereis_name(Name) of
+		undefined ->
+			exit(process_not_registered_globally);
+		Pid when Pid =:= self() ->
+			Name;
+		_Pid ->
+			exit(process_not_registered_globally)
+	end;
+get_proc_name({via, Mod, Name}) ->
+	case Mod:whereis_name(Name) of
+		undefined ->
+			exit({process_not_registered_via, Mod});
+		Pid when Pid =:= self() ->
+			Name;
+		_Pid ->
+			exit({process_not_registered_via, Mod})
+	end.
+
+get_parent() ->
+	case get('$ancestors') of
+		[Parent | _] when is_pid(Parent)->
+			Parent;
+		[Parent | _] when is_atom(Parent)->
+			name_to_pid(Parent);
+		_ ->
+			exit(process_was_not_started_by_proc_lib)
+	end.
+
+name_to_pid(Name) ->
+	case whereis(Name) of
+		undefined ->
+			case global:whereis_name(Name) of
+				undefined ->
+					exit(could_not_find_registered_name);
+				Pid ->
+					Pid
+			end;
+		Pid ->
+			Pid
+	end.
 
 %%-----------------------------------------------------------------
 %% Status information
