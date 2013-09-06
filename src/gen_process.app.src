@@ -1,6 +1,6 @@
 {application, gen_process, [
 	{description, "Generic process"},
-	{vsn, git},
+	{vsn, "0.9.0"},
 	{registered, []},
 	{applications, [
 		kernel,
